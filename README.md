@@ -4,6 +4,20 @@ An AI-powered tool that automates intercompany reconciliation, mismatch detectio
 
 Built with Python and the Anthropic Claude API.
 
+## Demo
+
+**Agent execution** — parses 36 IC transactions across 5 entities, matches 9 IC pairs, detects 5 errors, generates 9 elimination JEs, and validates all AI output:
+
+![Console Output](demo_console.png)
+
+**Reconciliation Summary** — all IC pairs with match status, severity classification, and AI validation results:
+
+![Recon Summary](demo_recon_summary.png)
+
+**AI-generated analysis** — root cause analysis, ASC references, and resolution actions for an FX rate mismatch finding:
+
+![AI Commentary](demo_ai_commentary.png)
+
 ## What It Does
 
 Public company consolidation teams spend significant time each quarter reconciling intercompany balances across legal entities. When balances don't match — due to timing differences, FX rate discrepancies, settlement disputes, or posting errors — someone manually investigates each mismatch, determines root cause, and prepares elimination entries.
