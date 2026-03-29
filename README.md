@@ -139,4 +139,4 @@ To adapt for a different company, edit `config.py`:
 
 ## Author
 
-Joel Stell, CPA MBA
+Joel Stell, CPA
