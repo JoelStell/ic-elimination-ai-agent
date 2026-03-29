@@ -5,5 +5,4 @@ Api_Key.txt
 __pycache__/
 *.pyc
 .env
-ic_elimination_report.xlsx
-ic_elimination_summary.md
+output/

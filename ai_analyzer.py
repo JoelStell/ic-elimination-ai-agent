@@ -6,6 +6,7 @@ for IC reconciliation findings.
 
 import os
 import sys
+import re
 from decimal import Decimal
 from typing import List, Tuple
 from models import ICPair, Finding
@@ -56,11 +57,20 @@ def analyze_all(ic_pairs: List[ICPair]) -> List[Finding]:
             finding.impact_assessment = ai_result.get("impact", "AI analysis unavailable.")
             finding.recommended_resolution = ai_result.get("resolution", "AI analysis unavailable.")
             finding.asc_reference = ai_result.get("asc_ref", "")
+
+            # Validate AI output — zero token cost, catches hallucinated amounts/entities
+            warnings = _validate_ai_response(finding, pair)
+            finding.ai_validation_warnings = warnings
+            finding.ai_validated = True
+            if warnings:
+                print(f"    ⚠ {finding_id} AI VALIDATION: {'; '.join(warnings)}")
         else:
             _generate_fallback_analysis(finding, pair)
+            finding.ai_validated = False
 
         findings.append(finding)
-        print(f"    Analyzed {finding_id}: {pair.entity_a_id} <-> {pair.entity_b_id} [{pair.error_category}]")
+        status_icon = "✓" if not finding.ai_validation_warnings else "⚠"
+        print(f"    {status_icon} Analyzed {finding_id}: {pair.entity_a_id} <-> {pair.entity_b_id} [{pair.error_category}]")
 
     # Generate executive summary
     if client and findings:
@@ -259,6 +269,105 @@ def _parse_response(text: str) -> dict:
         result[key] = text[start:end].strip()
 
     return result
+
+
+def _validate_ai_response(finding: Finding, pair: ICPair) -> list:
+    """Post-processing validation of Claude's output. Zero API cost.
+    Checks that the AI response references correct entities, amounts,
+    and doesn't contain obviously hallucinated data."""
+    warnings = []
+    full_text = " ".join([
+        finding.root_cause,
+        finding.impact_assessment,
+        finding.recommended_resolution,
+    ])
+
+    if not full_text.strip() or full_text.strip() == "AI analysis unavailable.":
+        warnings.append("AI returned empty or unavailable response")
+        return warnings
+
+    # CHECK 1: Response should reference at least one of the two entities
+    a_id = pair.entity_a_id
+    b_id = pair.entity_b_id
+    a_name = config.ENTITIES.get(a_id, {}).get("name", "")
+    b_name = config.ENTITIES.get(b_id, {}).get("name", "")
+
+    a_mentioned = a_id in full_text or a_name in full_text
+    b_mentioned = b_id in full_text or b_name in full_text
+
+    if not a_mentioned and not b_mentioned:
+        warnings.append(f"Response doesn't reference either entity ({a_id} or {b_id})")
+
+    # CHECK 2: If there's a net difference, response should cite a dollar amount
+    # that's close to the actual difference (not a hallucinated number)
+    if pair.net_difference > Decimal("0"):
+        diff_float = float(pair.net_difference)
+        # Extract all dollar amounts from the response
+        dollar_amounts = re.findall(r'\$[\d,]+(?:\.\d{2})?', full_text)
+        parsed_amounts = []
+        for amt_str in dollar_amounts:
+            try:
+                cleaned = amt_str.replace("$", "").replace(",", "")
+                parsed_amounts.append(float(cleaned))
+            except ValueError:
+                continue
+
+        # Check if the actual difference appears (within 10% tolerance)
+        if parsed_amounts:
+            closest = min(parsed_amounts, key=lambda x: abs(x - diff_float))
+            if abs(closest - diff_float) / max(diff_float, 1) > 0.10:
+                # The AI cited dollar amounts but none are close to the actual difference
+                # Only warn if the difference is material enough to expect a mention
+                if diff_float > 1000:
+                    warnings.append(
+                        f"Net difference is ${diff_float:,.2f} but closest amount "
+                        f"cited by AI is ${closest:,.2f}"
+                    )
+
+    # CHECK 3: Response should not reference entity IDs that aren't in this pair
+    all_entity_ids = set(config.ENTITIES.keys())
+    other_entities = all_entity_ids - {a_id, b_id}
+    for other_id in other_entities:
+        # Only flag if the other entity is mentioned as a primary subject,
+        # not just in passing (e.g., "unlike the APX-SS relationship...")
+        # Simple heuristic: flag if the entity ID appears more than twice
+        if full_text.count(other_id) > 2:
+            warnings.append(f"Response references unrelated entity {other_id} multiple times")
+
+    # CHECK 4: ASC reference should be a real ASC section
+    asc_ref = finding.asc_reference
+    if asc_ref:
+        valid_asc_prefixes = ["ASC 810", "ASC 830", "ASC 850", "ASC 820", "ASC 840",
+                              "ASC 805", "ASC 842", "ASC 606", "ASC 815", "ASC 320"]
+        has_valid_ref = any(prefix in asc_ref for prefix in valid_asc_prefixes)
+        if not has_valid_ref and "ASC" in asc_ref:
+            warnings.append(f"ASC reference may be invalid: '{asc_ref}'")
+
+    # CHECK 5: Verify error category alignment
+    category_keywords = {
+        "OneSided": ["one-sided", "orphan", "unmatched", "no offsetting", "missing",
+                      "not booked", "no corresponding", "one side"],
+        "FX": ["exchange rate", "fx", "foreign currency", "rate", "translation",
+               "revaluation", "currency"],
+        "Settlement": ["settlement", "repayment", "partial", "remaining balance",
+                       "wire transfer", "payment"],
+        "Classification": ["account", "misclassif", "reclassif", "wrong account",
+                           "incorrect account", "account code"],
+        "Unauthorized": ["unauthorized", "not authorized", "agreement schedule",
+                         "not listed", "approval", "not on the"],
+    }
+
+    expected_keywords = category_keywords.get(pair.error_category, [])
+    if expected_keywords:
+        text_lower = full_text.lower()
+        keyword_found = any(kw in text_lower for kw in expected_keywords)
+        if not keyword_found:
+            warnings.append(
+                f"Response doesn't contain expected keywords for "
+                f"'{pair.error_category}' error category"
+            )
+
+    return warnings
 
 
 def _generate_fallback_analysis(finding: Finding, pair: ICPair):

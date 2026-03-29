@@ -69,13 +69,23 @@ def main():
     print(f"\n[4/6] Running AI analysis on {len(errors)} findings...")
     findings, exec_summary = ai_analyzer.analyze_all(ic_pairs)
 
+    # Validation summary
+    validated = [f for f in findings if f.ai_validated]
+    passed = [f for f in validated if not f.ai_validation_warnings]
+    warned = [f for f in validated if f.ai_validation_warnings]
+    if validated:
+        print(f"\n  AI Validation: {len(passed)} passed, {len(warned)} warnings out of {len(validated)} validated")
+
+    # Create output directory
+    os.makedirs(config.OUTPUT_DIR, exist_ok=True)
+
     # Step 5: Write Excel output
     print(f"\n[5/6] Writing Excel report: {config.OUTPUT_EXCEL}")
     output_writer.write_excel(ic_pairs, journal_entries, findings)
 
-    # Step 6: Write markdown summary
-    print(f"\n[6/6] Writing markdown summary: {config.OUTPUT_MARKDOWN}")
-    output_writer.write_markdown_summary(
+    # Step 6: Write Word summary
+    print(f"\n[6/6] Writing Word summary: {config.OUTPUT_DOCX}")
+    output_writer.write_docx_summary(
         ic_pairs, journal_entries, findings, exec_summary
     )
 
@@ -84,7 +94,7 @@ def main():
     print(f"  COMPLETE — {elapsed:.1f}s elapsed")
     print(f"  Output files:")
     print(f"    - {config.OUTPUT_EXCEL}")
-    print(f"    - {config.OUTPUT_MARKDOWN}")
+    print(f"    - {config.OUTPUT_DOCX}")
     print(f"{'=' * 65}")
 
 

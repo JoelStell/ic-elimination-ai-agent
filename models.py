@@ -92,3 +92,5 @@ class Finding:
     recommended_resolution: str = ""
     asc_reference: str = ""
     priority: int = 3
+    ai_validation_warnings: List[str] = field(default_factory=list)
+    ai_validated: bool = False

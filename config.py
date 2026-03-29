@@ -9,6 +9,7 @@ To adapt this for a different company:
   5. Update FX_RATES with the period's rates from Treasury.
 """
 
+import os
 from decimal import Decimal
 
 # --- Report Period ---
@@ -157,5 +158,6 @@ AI_TEMPERATURE = 0.2  # Low temperature for factual analysis
 
 # --- File Paths ---
 INPUT_FILE = "ic_input_workbook.xlsx"
-OUTPUT_EXCEL = "ic_elimination_report.xlsx"
-OUTPUT_MARKDOWN = "ic_elimination_summary.md"
+OUTPUT_DIR = "output"
+OUTPUT_EXCEL = os.path.join(OUTPUT_DIR, "ic_elimination_report.xlsx")
+OUTPUT_DOCX = os.path.join(OUTPUT_DIR, "ic_elimination_summary.docx")

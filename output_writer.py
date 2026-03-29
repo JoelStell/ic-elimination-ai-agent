@@ -92,7 +92,7 @@ def _write_recon_summary(wb: Workbook, ic_pairs: List[ICPair], findings: List[Fi
         "IC Pair", "Transaction Type",
         "Entity A Balance (USD)", "Entity B Balance (USD)",
         "Net Difference (USD)", "Match Status", "Severity",
-        "Error Category", "AI Flag", "AI Commentary",
+        "Error Category", "AI Flag", "AI Validated", "AI Commentary",
         "ASC Reference", "Resolution Action",
     ]
     _style_header(ws, headers)
@@ -108,6 +108,22 @@ def _write_recon_summary(wb: Workbook, ic_pairs: List[ICPair], findings: List[Fi
         key = (pair.entity_a_id, pair.entity_b_id, pair.transaction_type)
         finding = findings_map.get(key)
         has_ai = "Y" if finding else "N"
+
+        # AI validation status
+        if finding and finding.ai_validated:
+            if finding.ai_validation_warnings:
+                validated = f"WARN ({len(finding.ai_validation_warnings)})"
+                validated_fill = PatternFill("solid", fgColor="FFF2CC")
+            else:
+                validated = "PASS"
+                validated_fill = PatternFill("solid", fgColor="C6EFCE")
+        elif finding:
+            validated = "Fallback"
+            validated_fill = PatternFill("solid", fgColor="DDEBF7")
+        else:
+            validated = "N/A"
+            validated_fill = None
+
         commentary = finding.root_cause if finding else "No issues identified."
         asc_ref = finding.asc_reference if finding else ""
         resolution = finding.recommended_resolution if finding else ""
@@ -123,11 +139,12 @@ def _write_recon_summary(wb: Workbook, ic_pairs: List[ICPair], findings: List[Fi
         _write_cell(ws, row_idx, 7, pair.severity, fill=severity_fill)
         _write_cell(ws, row_idx, 8, pair.error_category)
         _write_cell(ws, row_idx, 9, has_ai)
-        _write_cell(ws, row_idx, 10, commentary)
-        _write_cell(ws, row_idx, 11, asc_ref)
-        _write_cell(ws, row_idx, 12, resolution)
+        _write_cell(ws, row_idx, 10, validated, fill=validated_fill)
+        _write_cell(ws, row_idx, 11, commentary)
+        _write_cell(ws, row_idx, 12, asc_ref)
+        _write_cell(ws, row_idx, 13, resolution)
 
-    _set_col_widths(ws, [22, 16, 22, 22, 22, 16, 12, 16, 8, 55, 40, 55])
+    _set_col_widths(ws, [22, 16, 22, 22, 22, 16, 12, 16, 8, 14, 55, 40, 55])
     ws.freeze_panes = "A2"
     ws.auto_filter.ref = ws.dimensions
 
@@ -189,7 +206,7 @@ def _write_mismatch_detail(wb: Workbook, findings: List[Finding]):
         "Finding ID", "IC Pair", "Transaction Type", "Error Category",
         "Entity A Data", "Entity B Data", "Difference (USD)",
         "Root Cause Analysis", "Impact Assessment",
-        "Recommended Resolution", "ASC Reference", "Priority",
+        "Recommended Resolution", "ASC Reference", "Priority", "AI Validation",
     ]
     _style_header(ws, headers)
 
@@ -206,6 +223,17 @@ def _write_mismatch_detail(wb: Workbook, findings: List[Finding]):
         elif f.priority == 2:
             priority_fill = PatternFill("solid", fgColor="FFF2CC")
 
+        # Validation status
+        if f.ai_validated and not f.ai_validation_warnings:
+            validation_text = "PASS"
+            validation_fill = PatternFill("solid", fgColor="C6EFCE")
+        elif f.ai_validated and f.ai_validation_warnings:
+            validation_text = "; ".join(f.ai_validation_warnings)
+            validation_fill = PatternFill("solid", fgColor="FFF2CC")
+        else:
+            validation_text = "Fallback (no API)"
+            validation_fill = PatternFill("solid", fgColor="DDEBF7")
+
         _write_cell(ws, row_idx, 1, f.finding_id)
         _write_cell(ws, row_idx, 2, pair_label)
         _write_cell(ws, row_idx, 3, pair.transaction_type)
@@ -218,8 +246,9 @@ def _write_mismatch_detail(wb: Workbook, findings: List[Finding]):
         _write_cell(ws, row_idx, 10, f.recommended_resolution)
         _write_cell(ws, row_idx, 11, f.asc_reference)
         _write_cell(ws, row_idx, 12, f.priority, fill=priority_fill)
+        _write_cell(ws, row_idx, 13, validation_text, fill=validation_fill)
 
-    _set_col_widths(ws, [12, 22, 16, 16, 45, 45, 18, 55, 55, 55, 40, 10])
+    _set_col_widths(ws, [12, 22, 16, 16, 45, 45, 18, 55, 55, 55, 40, 10, 40])
     ws.freeze_panes = "A2"
 
 
@@ -236,53 +265,214 @@ def _summarize_entity_data(data: dict) -> str:
     return "\n".join(lines)
 
 
-def write_markdown_summary(
+def write_docx_summary(
     ic_pairs: List[ICPair],
     journal_entries: List[EliminationJE],
     findings: List[Finding],
     exec_summary: str,
     filepath: str = None,
 ):
-    filepath = filepath or config.OUTPUT_MARKDOWN
+    filepath = filepath or config.OUTPUT_DOCX
+    from docx import Document as DocxDocument
+    from docx.shared import Inches, Pt, Cm, RGBColor
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.enum.table import WD_TABLE_ALIGNMENT
+
+    doc = DocxDocument()
+
+    # Set default font
+    style = doc.styles["Normal"]
+    style.font.name = "Arial"
+    style.font.size = Pt(10)
+
+    # --- Title ---
+    title = doc.add_heading("Intercompany Elimination & Reconciliation Report", level=0)
+    title.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    for run in title.runs:
+        run.font.color.rgb = RGBColor(0x2F, 0x54, 0x96)
+
+    subtitle = doc.add_paragraph()
+    subtitle.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = subtitle.add_run(f"Period: {config.REPORT_PERIOD}  |  Report Date: {config.REPORT_DATE}")
+    run.font.size = Pt(11)
+    run.font.color.rgb = RGBColor(0x59, 0x56, 0x59)
+
+    doc.add_paragraph("")  # spacer
+
+    # --- Executive Summary ---
+    doc.add_heading("Executive Summary", level=1)
+    # Split exec_summary into paragraphs and add each
+    for para_text in exec_summary.strip().split("\n\n"):
+        cleaned = para_text.strip()
+        if cleaned and not cleaned.startswith("#") and not cleaned.startswith("|") and not cleaned.startswith("---"):
+            p = doc.add_paragraph()
+            run = p.add_run(cleaned)
+            run.font.size = Pt(10)
+
+    # --- Summary Statistics ---
+    doc.add_heading("Summary Statistics", level=1)
 
     matched = [p for p in ic_pairs if p.match_status == "Matched"]
+    total_matched_usd = sum(p.entity_a_total_usd for p in matched)
+    critical = [f for f in findings if f.priority == 1]
+    review = [f for f in findings if f.priority == 2]
     auto_jes = [j for j in journal_entries if j.status == "AutoGenerated"]
     review_jes = [j for j in journal_entries if j.status == "RequiresReview"]
     blocked_jes = [j for j in journal_entries if j.status == "Blocked"]
 
-    total_matched_usd = sum(p.entity_a_total_usd for p in matched)
-    total_findings_usd = sum(f.difference_usd for f in findings)
+    stats = [
+        ("Total IC pairs analyzed", str(len(ic_pairs))),
+        ("Clean matches", f"{len(matched)} (${total_matched_usd:,.2f})"),
+        ("Findings requiring review", str(len(findings))),
+        ("Critical/High priority", str(len(critical))),
+        ("Medium priority", str(len(review))),
+        ("Elimination JEs auto-generated", str(len(auto_jes))),
+        ("Elimination JEs requiring review", str(len(review_jes))),
+        ("Elimination JEs blocked", str(len(blocked_jes))),
+    ]
 
-    md = exec_summary + "\n\n"
+    stats_table = doc.add_table(rows=len(stats), cols=2, style="Light Grid Accent 1")
+    stats_table.alignment = WD_TABLE_ALIGNMENT.LEFT
+    for i, (label, value) in enumerate(stats):
+        stats_table.rows[i].cells[0].text = label
+        stats_table.rows[i].cells[1].text = value
+        for cell in stats_table.rows[i].cells:
+            for paragraph in cell.paragraphs:
+                for run in paragraph.runs:
+                    run.font.size = Pt(10)
+                    run.font.name = "Arial"
 
-    md += "---\n\n"
-    md += "### Elimination JE Summary\n\n"
-    md += f"| JE Number | Type | Entities | Amount (USD) | Status |\n"
-    md += f"|-----------|------|----------|-------------|--------|\n"
+    doc.add_paragraph("")
+
+    # --- Critical Findings ---
+    if critical:
+        doc.add_heading("Critical Findings", level=1)
+        for f in critical:
+            pair = f.ic_pair
+            doc.add_heading(
+                f"{f.finding_id}: {pair.entity_a_id} — {pair.entity_b_id} ({pair.error_category})",
+                level=2,
+            )
+
+            p = doc.add_paragraph()
+            run = p.add_run("Root Cause: ")
+            run.bold = True
+            run.font.size = Pt(10)
+            run = p.add_run(f.root_cause)
+            run.font.size = Pt(10)
+
+            p = doc.add_paragraph()
+            run = p.add_run("Impact: ")
+            run.bold = True
+            run.font.size = Pt(10)
+            run = p.add_run(f.impact_assessment)
+            run.font.size = Pt(10)
+
+            p = doc.add_paragraph()
+            run = p.add_run("Resolution: ")
+            run.bold = True
+            run.font.size = Pt(10)
+            run = p.add_run(f.recommended_resolution)
+            run.font.size = Pt(10)
+
+            if f.asc_reference:
+                p = doc.add_paragraph()
+                run = p.add_run("ASC Reference: ")
+                run.bold = True
+                run.font.size = Pt(10)
+                run = p.add_run(f.asc_reference)
+                run.font.size = Pt(10)
+                run.font.italic = True
+
+    # --- Findings Requiring Review ---
+    if review:
+        doc.add_heading("Findings Requiring Review", level=1)
+        for f in review:
+            pair = f.ic_pair
+            doc.add_heading(
+                f"{f.finding_id}: {pair.entity_a_id} — {pair.entity_b_id} ({pair.error_category})",
+                level=2,
+            )
+
+            p = doc.add_paragraph()
+            run = p.add_run("Root Cause: ")
+            run.bold = True
+            run.font.size = Pt(10)
+            run = p.add_run(f.root_cause)
+            run.font.size = Pt(10)
+
+            p = doc.add_paragraph()
+            run = p.add_run("Resolution: ")
+            run.bold = True
+            run.font.size = Pt(10)
+            run = p.add_run(f.recommended_resolution)
+            run.font.size = Pt(10)
+
+    # --- Elimination JE Summary ---
+    doc.add_heading("Elimination JE Summary", level=1)
+
+    je_table = doc.add_table(rows=1, cols=5, style="Light Grid Accent 1")
+    je_table.alignment = WD_TABLE_ALIGNMENT.LEFT
+    je_headers = ["JE Number", "Type", "Entities", "Amount (USD)", "Status"]
+    for i, header in enumerate(je_headers):
+        cell = je_table.rows[0].cells[i]
+        cell.text = header
+        for paragraph in cell.paragraphs:
+            for run in paragraph.runs:
+                run.bold = True
+                run.font.size = Pt(9)
+                run.font.name = "Arial"
+
     for je in journal_entries:
+        row = je_table.add_row()
         amt = f"${je.total_debits:,.2f}" if je.total_debits > 0 else "N/A"
-        md += f"| {je.je_number} | {je.ic_transaction_type} | {je.entity_a} / {je.entity_b} | {amt} | {je.status} |\n"
+        values = [je.je_number, je.ic_transaction_type, f"{je.entity_a} / {je.entity_b}", amt, je.status]
+        for i, val in enumerate(values):
+            row.cells[i].text = val
+            for paragraph in row.cells[i].paragraphs:
+                for run in paragraph.runs:
+                    run.font.size = Pt(9)
+                    run.font.name = "Arial"
 
-    md += "\n---\n\n"
-    md += "### ASC Compliance Notes\n\n"
-    md += (
-        "- **ASC 810-10** — Consolidation: All intercompany balances and transactions "
-        "must be eliminated in the consolidated financial statements.\n"
-        "- **ASC 830-10-45** — Foreign Currency: Transaction gains and losses from IC "
-        "balances denominated in a currency other than the entity's functional currency "
-        "must be recognized in income. Entities in the same IC transaction should use "
-        "consistent exchange rates.\n"
-        "- **ASC 850-10-50** — Related Party Disclosures: Unauthorized IC transactions "
-        "may trigger additional disclosure requirements.\n"
-    )
+    doc.add_paragraph("")
 
-    md += "\n---\n\n"
-    md += (
-        f"*Report generated by Intercompany Elimination & Reconciliation Agent v1.0*\n"
-        f"*Author: Joel Stell, CPA MBA*\n"
-    )
+    # --- ASC Compliance Notes ---
+    doc.add_heading("ASC Compliance Notes", level=1)
 
-    with open(filepath, "w") as f:
-        f.write(md)
+    asc_notes = [
+        ("ASC 810-10", "Consolidation: All intercompany balances and transactions "
+         "must be eliminated in the consolidated financial statements."),
+        ("ASC 830-10-45", "Foreign Currency: Transaction gains and losses from IC "
+         "balances denominated in a currency other than the entity's functional currency "
+         "must be recognized in income. Entities in the same IC transaction should use "
+         "consistent exchange rates."),
+        ("ASC 850-10-50", "Related Party Disclosures: Unauthorized IC transactions "
+         "may trigger additional disclosure requirements."),
+    ]
 
-    print(f"  Markdown summary saved: {filepath}")
+    for ref, note in asc_notes:
+        p = doc.add_paragraph()
+        run = p.add_run(f"{ref} — ")
+        run.bold = True
+        run.font.size = Pt(10)
+        run = p.add_run(note)
+        run.font.size = Pt(10)
+
+    # --- Footer ---
+    doc.add_paragraph("")
+    footer = doc.add_paragraph()
+    footer.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = footer.add_run("Report generated by Intercompany Elimination & Reconciliation Agent v1.0")
+    run.font.size = Pt(8)
+    run.font.color.rgb = RGBColor(0x99, 0x99, 0x99)
+    run.font.italic = True
+
+    footer2 = doc.add_paragraph()
+    footer2.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    run = footer2.add_run("Author: Joel Stell, CPA MBA")
+    run.font.size = Pt(8)
+    run.font.color.rgb = RGBColor(0x99, 0x99, 0x99)
+    run.font.italic = True
+
+    doc.save(filepath)
+    print(f"  Word summary saved: {filepath}")

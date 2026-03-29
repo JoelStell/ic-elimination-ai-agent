@@ -16,16 +16,29 @@ This agent automates that workflow:
 4. **Classifies** mismatches by error type and severity (Clean → Low → Medium → High → Critical)
 5. **Generates** elimination journal entries for clean matches; blocks or flags entries requiring review
 6. **Analyzes** each finding using the Claude API — root cause analysis, financial statement impact assessment, and resolution recommendations with entity attribution
-7. **Produces** a formatted Excel report (3 tabs) and markdown executive summary
+7. **Validates** AI output against source data — checks entity references, dollar amounts, error category alignment, and ASC citations at zero token cost
+8. **Produces** a formatted Excel report (3 tabs) and Word document executive summary
 
 ## Architecture
 
 The tool separates deterministic logic from AI analysis:
 
-- **Python handles**: parsing, matching, netting, FX rate comparison, account code validation, authorization checks, severity classification, and JE generation
+- **Python handles**: parsing, matching, netting, FX rate comparison, account code validation, authorization checks, severity classification, JE generation, and AI output validation
 - **Claude handles**: root cause analysis, impact assessment, resolution recommendations, and executive summary narrative
 
-This separation makes the matching logic fast, testable, and reliable, while leveraging AI for the judgment-intensive work that consolidation systems don't automate.
+This separation makes the matching logic fast, testable, and reliable, while leveraging AI for the judgment-intensive work that consolidation systems don't automate. The AI layer is commentary only — it explains findings that deterministic logic already identified and quantified. If Claude hallucinated a root cause, the dollar amounts and entity attributions in the structured output are still correct because they come from Python.
+
+### AI Output Validation
+
+A post-processing validation layer checks every AI response against the source data:
+
+- Verifies the response references the correct entity names and IDs
+- Checks that cited dollar amounts are consistent with actual finding data
+- Flags responses that reference unrelated entities
+- Validates ASC references against known codification sections
+- Confirms error category alignment through keyword detection
+
+This runs at zero additional token cost — it's Python string matching on Claude's response, not a second API call.
 
 ## Demo Data
 
@@ -51,12 +64,13 @@ The included input workbook contains 5 entities across 2 segments with 7 interco
 
 ## Output
 
-**Excel Report** (3 tabs):
-- **Recon Summary** — Dashboard view of all IC pairs with match status, severity, and AI commentary
+**Excel Report** (`output/ic_elimination_report.xlsx`, 3 tabs):
+- **Recon Summary** — Dashboard view of all IC pairs with match status, severity, AI validation status, and AI commentary
 - **Elimination JEs** — Generated journal entries with debit/credit lines, status (Auto/Review/Blocked), and notes
-- **Mismatch Detail** — Deep-dive findings with root cause analysis, impact assessment, and resolution recommendations
+- **Mismatch Detail** — Deep-dive findings with root cause analysis, impact assessment, resolution recommendations, and AI validation results
 
-**Markdown Summary** — Executive-level narrative suitable for CFO review
+**Word Document** (`output/ic_elimination_summary.docx`):
+- Executive summary with formatted tables, critical findings detail, elimination JE summary, and ASC compliance notes
 
 ## ASC References
 
@@ -78,7 +92,7 @@ Create an `API_Key.txt` file in the project directory with your Anthropic API ke
 python ic_elimination_agent.py
 ```
 
-The agent reads `ic_input_workbook.xlsx` and produces `ic_elimination_report.xlsx` and `ic_elimination_summary.md`.
+The agent reads `ic_input_workbook.xlsx` and produces output files in the `output/` directory.
 
 ## File Structure
 
@@ -89,12 +103,15 @@ The agent reads `ic_input_workbook.xlsx` and produces `ic_elimination_report.xls
 ├── input_parser.py            # Excel input reader and validator
 ├── matching_engine.py         # IC pair matching and reconciliation logic
 ├── je_generator.py            # Elimination journal entry generator
-├── ai_analyzer.py             # Claude API integration for analysis
-├── output_writer.py           # Excel and markdown output producer
+├── ai_analyzer.py             # Claude API integration + AI output validation
+├── output_writer.py           # Excel and Word document output producer
 ├── build_input_workbook.py    # Script to regenerate the demo input file
 ├── ic_input_workbook.xlsx     # Demo input data (5 entities, 7 transaction sets)
 ├── requirements.txt
-└── README.md
+├── README.md
+└── output/                    # Generated output files (gitignored)
+    ├── ic_elimination_report.xlsx
+    └── ic_elimination_summary.docx
 ```
 
 ## Customization
