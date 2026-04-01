@@ -1,7 +1,7 @@
 """
-Output Writer — produces the Excel elimination report and markdown summary.
+Output Writer — produces the Excel elimination report and Word document summary.
 Three Excel tabs: Recon Summary, Elimination JEs, Mismatch Detail.
-One markdown executive summary file.
+One Word document executive summary.
 """
 
 from decimal import Decimal

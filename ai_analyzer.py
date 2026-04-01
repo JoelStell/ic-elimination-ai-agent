@@ -405,13 +405,40 @@ def _generate_fallback_analysis(finding: Finding, pair: ICPair):
         finding.asc_reference = "ASC 810-10-45 (Consolidation — Other Presentation Matters)"
 
     elif pair.error_category == "FX":
-        finding.root_cause = (
-            f"Both entities booked the same IC transaction but used different FX rates. "
-            f"{pair.entity_a_id} used rate {pair.fx_rate_a}, {pair.entity_b_id} used rate "
-            f"{pair.fx_rate_b}. USD amounts appear to match, but the underlying local "
-            f"currency amounts diverge. One entity likely used the transaction date rate "
-            f"while the other used the month-end rate."
-        )
+        # Identify which entity is USD and which is foreign
+        a_currency = config.ENTITIES.get(pair.entity_a_id, {}).get("currency", "USD")
+        b_currency = config.ENTITIES.get(pair.entity_b_id, {}).get("currency", "USD")
+
+        if a_currency == "USD" and b_currency != "USD":
+            usd_entity = pair.entity_a_id
+            foreign_entity = pair.entity_b_id
+            foreign_rate = pair.fx_rate_b
+        elif b_currency == "USD" and a_currency != "USD":
+            usd_entity = pair.entity_b_id
+            foreign_entity = pair.entity_a_id
+            foreign_rate = pair.fx_rate_a
+        else:
+            usd_entity = None
+            foreign_entity = None
+            foreign_rate = None
+
+        if usd_entity and foreign_entity:
+            finding.root_cause = (
+                f"Both entities booked the same IC transaction but the foreign currency "
+                f"entity used an inconsistent FX rate. {usd_entity} is a USD entity and "
+                f"booked in USD (no conversion needed). {foreign_entity} used rate "
+                f"{foreign_rate}, which appears to be the month-end rate rather than the "
+                f"transaction date rate. USD amounts appear to match, but the underlying "
+                f"local currency amounts diverge."
+            )
+        else:
+            finding.root_cause = (
+                f"Both entities booked the same IC transaction but used different FX rates. "
+                f"{pair.entity_a_id} used rate {pair.fx_rate_a}, {pair.entity_b_id} used rate "
+                f"{pair.fx_rate_b}. USD amounts appear to match, but the underlying local "
+                f"currency amounts diverge. One entity likely used the transaction date rate "
+                f"while the other used the month-end rate."
+            )
         finding.impact_assessment = (
             f"While the USD elimination appears clean, the FX rate inconsistency will "
             f"generate a spurious FX gain/loss at the next balance sheet revaluation. "

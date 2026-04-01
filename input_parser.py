@@ -4,7 +4,7 @@ plus the IC Agreement Schedule.
 """
 
 from decimal import Decimal, InvalidOperation
-from typing import List, Dict, Tuple, Set
+from typing import List, Dict, Tuple
 from openpyxl import load_workbook
 from models import ICTransaction
 import config
